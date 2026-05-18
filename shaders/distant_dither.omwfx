@@ -1,0 +1,111 @@
+uniform_bool uEnabled {
+    display_name = "Enable Shader";
+    default = true;
+    header = "Debug";
+}
+
+uniform_bool uColorDither {
+    display_name = "Colour Dither";
+    default = true;
+    header = "Dither Settings";
+}
+
+uniform_float uDistStart {
+    display_name = "Distance Start";
+    default = 2000.0;
+    step = 100.0;
+    min = 0.0;
+    max = 20000.0;
+    header = "Dither Settings";
+    description = "World-space distance at which dithering begins.";
+}
+
+uniform_float uDistEnd {
+    display_name = "Distance End";
+    default = 8000.0;
+    step = 100.0;
+    min = 0.0;
+    max = 50000.0;
+    description = "World-space distance at which dithering reaches full strength.";
+}
+
+uniform_float uMaxStrength {
+    display_name = "Max Strength";
+    default = 0.06;
+    step = 0.005;
+    min = 0.0;
+    max = 0.25;
+    description = "Peak luminance offset of the dither pattern. 0.06 = moderate.";
+}
+
+fragment main {
+    omw_In vec2 omw_TexCoord;
+
+    float bayer4x4(vec2 fc)
+    {
+        int x = int(mod(fc.x, 4.0));
+        int y = int(mod(fc.y, 4.0));
+        float b = 0.0;
+        if (y == 0) {
+            if      (x == 0) b =  0.0;
+            else if (x == 1) b =  8.0;
+            else if (x == 2) b =  2.0;
+            else             b = 10.0;
+        } else if (y == 1) {
+            if      (x == 0) b = 12.0;
+            else if (x == 1) b =  4.0;
+            else if (x == 2) b = 14.0;
+            else             b =  6.0;
+        } else if (y == 2) {
+            if      (x == 0) b =  3.0;
+            else if (x == 1) b = 11.0;
+            else if (x == 2) b =  1.0;
+            else             b =  9.0;
+        } else {
+            if      (x == 0) b = 15.0;
+            else if (x == 1) b =  7.0;
+            else if (x == 2) b = 13.0;
+            else             b =  5.0;
+        }
+        return (b / 16.0) - 0.5;
+    }
+
+    void main()
+    {
+        vec4 color = omw_GetLastShader(omw_TexCoord);
+
+        if (!uEnabled) {
+            omw_FragColor = color;
+            return;
+        }
+
+        vec3 worldPos  = omw_GetWorldPosFromUV(omw_TexCoord);
+        vec3 cameraPos = omw.eyePos.xyz;
+        float dist     = length(cameraPos - worldPos);
+
+        float weight   = smoothstep(uDistStart, uDistEnd, dist);
+        float strength = weight * uMaxStrength;
+
+        vec2  pix  = gl_FragCoord.xy;
+        float thrR = bayer4x4(pix);
+
+        if (uColorDither) {
+            float thrG = bayer4x4(pix + vec2(1.0, 2.0));
+            float thrB = bayer4x4(pix + vec2(2.0, 1.0));
+            color.r += thrR * strength;
+            color.g += thrG * strength;
+            color.b += thrB * strength;
+        } else {
+            color.rgb += thrR * strength;
+        }
+
+        omw_FragColor = color;
+    }
+}
+
+technique {
+    description = "Dithered fog.";
+    passes = main;
+    version = "1.0";
+    author = "Erin Pentecost (AGPL)";
+}

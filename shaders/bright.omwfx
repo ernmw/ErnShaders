@@ -1,0 +1,172 @@
+uniform_bool uEnabled {
+    display_name = "Enable Shader";
+    default = true;
+    header = "Debug";
+}
+
+uniform_float SpecialContrast
+{
+    default = 0.5;
+    min = 0.0;
+    max = 1.0;
+    step = 0.05;
+    display_name = "Special Contrast";
+    description = "Special contrast effect intensity";
+}
+
+uniform_float HdrThreshold
+{
+    header = "HDR Tonemapping settings";
+    default = 0.25;
+    min = 0.0;
+    max = 2.0;
+    step = 0.05;
+    display_name = "HDR Threshold";
+}
+
+uniform_float LinearWhite
+{
+    default = 1.0;
+    min = 0.1;
+    max = 16.0;
+    step = 0.1;
+    display_name = "Linear White";
+}
+
+uniform_float LinearAngle
+{
+    default = 0.11;
+    min = 0.0;
+    max = 1.0;
+    step = 0.02;
+    display_name = "Linear Angle";
+}
+
+uniform_float ExposureBias
+{
+    default = 1.3;
+    min = 0.1;
+    max = 16.0;
+    step = 0.1;
+    display_name = "Exposure Bias";
+    static = false;
+}
+
+uniform_float MaxExposure
+{
+    default = 0.26;
+    min = 0.0;
+    max = 1.0;
+    step = 0.01;
+    display_name = "Maximum Exposure";
+}
+
+uniform_float MinExposure
+{
+    default = 0.03;
+    min = 0.0;
+    max = 1.0;
+    step = 0.005;
+    display_name = "Minimum Exposure";
+}
+
+
+
+shared
+{
+    #define float2 vec2
+    #define float3 vec3
+    #define float4 vec4
+    #define saturate(x) clamp(x, 0.0f, 1.0f)
+
+    float log10(float x)
+    {
+        return log(x) * 2.302585092994f;
+    }
+
+    float3 CalculateExposedColor(float3 color, float averageLuminance, float threshold)
+    {
+        float middleGrey = 1.03f - (2.0f / (2.0f + log10(averageLuminance + 1.0f)));
+
+        float linearExposure = (middleGrey / averageLuminance);
+        float exposure = log2(max(linearExposure, 0.0001f));
+
+        exposure -= threshold;
+        color = exp2(exposure) * color;
+        return color;
+    }
+
+    float GetAverageLuminance()
+    {
+        float x = omw_GetEyeAdaptation();
+        x = clamp(x, MinExposure, MaxExposure);
+        return x;
+    }
+}
+
+fragment blitz
+{
+    omw_In float2 omw_TexCoord;
+
+    float3 Hable(float3 x)
+    {
+        float3 A = float3(0.5);
+        float3 B = float3(0.3);
+        float3 C = float3(LinearAngle);
+        float3 D = float3(0.3);
+        const float3 E = float3(0.01f);
+        const float3 F = float3(0.30f);
+
+        return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F;
+    }
+
+    float3 Tone(float3 color)
+    {
+        float3 numerator = Hable(color * ExposureBias);
+        float3 denominator = Hable(float3(LinearWhite));
+        color = numerator / denominator;
+        return color;
+    }
+
+    void main()
+    {
+        float4 scene = omw_GetLastShader(omw_TexCoord);
+
+        if (!uEnabled) {
+            omw_FragColor = scene;
+            return;
+        }
+
+        float averageLuminance = GetAverageLuminance();
+
+        float threshold = HdrThreshold;
+
+        scene.rgb = CalculateExposedColor(scene.rgb, averageLuminance, threshold);
+        scene.rgb = Tone(scene.rgb);
+
+        float contrastPower = clamp(SpecialContrast, 0.0, 1.0);
+        float saturation = 1.5f + contrastPower * 0.5f;
+
+        float luma = dot(scene.rgb, float3(0.299f, 0.587f, 0.114f));
+        saturation = mix(1.0f, saturation, smoothstep(1.2f, 0.6f, luma));
+
+        float4 x = scene;
+        float3 contrasted = float3(x*x*x*(x*(x*6.0 - 15.0) + 10.0));
+        x.rgb = mix(x.rgb, contrasted, contrastPower * 0.25f);
+        float3 sat = mix(float3(luma), x.rgb, saturation);
+
+        float3 col = mix(x.rgb, sat, 0.33 * (x.r+x.g+x.b));
+
+        scene.rgb = col.rgb;
+
+        omw_FragColor = scene;
+    }
+}
+
+technique {
+    passes = blitz;
+    description = "HDR tonemapping + contrast/saturation.";
+    version = "1.0";
+    hdr = true;
+    author = "Erin Pentecost (AGPL)";
+}
